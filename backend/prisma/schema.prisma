@@ -1,0 +1,214 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model Product {
+  sku          String  @id
+  name         String
+  category     String?
+  unitCost     Float
+  sellingPrice Float
+
+  inventories    Inventory[]
+  forecasts      Forecast[]
+  supplierProds  SupplierProduct[]
+  demandHistory  DemandHistory[]
+  purchaseOrders PurchaseOrder[]
+}
+
+model Supplier {
+  supplierId           String @id
+  name                 String
+  leadTimeDays         Int
+  minimumOrderQuantity Int
+  fillRate             Float
+  reliabilityScore     Float
+  status               String @default("ACTIVE") // ACTIVE, INACTIVE
+
+  supplierProds  SupplierProduct[]
+  purchaseOrders PurchaseOrder[]
+}
+
+model SupplierProduct {
+  id                  String @id @default(uuid())
+  supplierId          String
+  sku                 String
+  unitCost            Float
+  fulfillmentCapacity Int?
+
+  supplier Supplier @relation(fields: [supplierId], references: [supplierId])
+  product  Product  @relation(fields: [sku], references: [sku])
+
+  @@unique([supplierId, sku])
+}
+
+model FulfillmentNode {
+  nodeId String @id
+  name   String
+
+  inventories    Inventory[]
+  budget         Budget?
+  storage        Storage?
+  demandHistory  DemandHistory[]
+  forecasts      Forecast[]
+  purchaseOrders PurchaseOrder[]
+}
+
+model Inventory {
+  id                 String @id @default(uuid())
+  sku                String
+  nodeId             String
+  currentQuantity    Int    @default(0)
+  reservedQuantity   Int    @default(0)
+  reorderPoint       Int    @default(0)
+  safetyStock        Int    @default(0)
+  dailyAverageDemand Float  @default(0)
+
+  product Product         @relation(fields: [sku], references: [sku])
+  node    FulfillmentNode @relation(fields: [nodeId], references: [nodeId])
+
+  @@unique([sku, nodeId])
+}
+
+model DemandHistory {
+  id                         String @id @default(uuid())
+  sku                        String
+  nodeId                     String
+  previousAverageDailyDemand Float  @default(0)
+  currentAverageDailyDemand  Float  @default(0)
+  trendPercentage            Float  @default(0)
+
+  product Product         @relation(fields: [sku], references: [sku])
+  node    FulfillmentNode @relation(fields: [nodeId], references: [nodeId])
+
+  @@unique([sku, nodeId])
+}
+
+model Forecast {
+  id         String @id @default(uuid())
+  sku        String
+  nodeId     String
+  next3Days  Int    @default(0)
+  next5Days  Int    @default(0)
+  next7Days  Int    @default(0)
+  next14Days Int    @default(0)
+  confidence Float  @default(0)
+  version    Int    @default(1)
+
+  product Product         @relation(fields: [sku], references: [sku])
+  node    FulfillmentNode @relation(fields: [nodeId], references: [nodeId])
+
+  @@unique([sku, nodeId])
+}
+
+model PurchaseOrder {
+  poId                String   @id
+  sku                 String
+  nodeId              String
+  supplierId          String
+  quantity            Int
+  unitCost            Float
+  totalCost           Float
+  status              String   @default("PENDING") // PENDING, CONFIRMED, COMPLETED
+  expectedArrivalDays Int
+  createdAt           DateTime @default(now())
+
+  product  Product         @relation(fields: [sku], references: [sku])
+  node     FulfillmentNode @relation(fields: [nodeId], references: [nodeId])
+  supplier Supplier        @relation(fields: [supplierId], references: [supplierId])
+}
+
+model Budget {
+  id              String @id @default(uuid())
+  nodeId          String @unique
+  monthlyBudget   Float  @default(0)
+  committedAmount Float  @default(0)
+  availableBudget Float  @default(0)
+  version         Int    @default(1)
+
+  node FulfillmentNode @relation(fields: [nodeId], references: [nodeId])
+}
+
+model Storage {
+  id                     String @id @default(uuid())
+  nodeId                 String @unique
+  totalCapacityUnits     Int    @default(0)
+  occupiedCapacityUnits  Int    @default(0)
+  availableCapacityUnits Int    @default(0)
+
+  node FulfillmentNode @relation(fields: [nodeId], references: [nodeId])
+}
+
+model PurchaseRecommendation {
+  id                  String   @id @default(uuid())
+  sku                 String
+  nodeId              String
+  recommendedQuantity Int
+  reason              String
+  status              String   @default("PENDING") // PENDING, REVIEWED
+  createdAt           DateTime @default(now())
+}
+
+model AgentRun {
+  runId            String    @id @default(uuid())
+  recommendationId String?
+  startedAt        DateTime  @default(now())
+  completedAt      DateTime?
+  status           String // RECEIVED, INVESTIGATING, DECIDING, VALIDATING, AWAITING_APPROVAL, EXECUTING, POST_VALIDATING, COMPLETED, VALIDATION_FAILED, REINVESTIGATING, REVISED_DECISION
+
+  decision            String?
+  recommendedQuantity Int?
+  confidence          Float?
+  decisionReasoning   String?
+  proposedAction      String?
+  proposedSupplierId  String?
+  proposedActions     String? // Complex array of actions JSON
+  executedAction      String?
+  validationStatus    String?
+  stateVersion        Int?
+  forecastVersion     Int?
+  supplierVersion     Int?
+
+  logs        ToolCall[]
+  validations ValidationResult[]
+  approvals   Approval[]
+}
+
+model ToolCall {
+  id            String   @id @default(uuid())
+  runId         String
+  toolName      String
+  inputSummary  String
+  resultSummary String
+  timestamp     DateTime @default(now())
+  status        String   @default("SUCCESS")
+
+  run AgentRun @relation(fields: [runId], references: [runId])
+}
+
+model ValidationResult {
+  id           String   @id @default(uuid())
+  runId        String
+  stage        String // PRE_EXECUTION, POST_EXECUTION
+  valid        Boolean
+  checkDetails String // JSON string logging details
+  timestamp    DateTime @default(now())
+
+  run AgentRun @relation(fields: [runId], references: [runId])
+}
+
+model Approval {
+  id           String   @id @default(uuid())
+  runId        String
+  requestedAt  DateTime @default(now())
+  status       String   @default("PENDING") // PENDING, APPROVED, REJECTED
+  thresholdUsd Float?
+  actualUsd    Float?
+
+  run AgentRun @relation(fields: [runId], references: [runId])
+}
